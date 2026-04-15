@@ -209,6 +209,11 @@ export let checkingConnection = false;
 
 export let serverManagerApi: serverManager.ServerManagerAPI;
 
+type GetUriForDocumentOptions = {
+  workspaceFolderUri?: string;
+  forceServerCopy?: boolean;
+};
+
 /** Map of the intersystems.server connection specs we have resolved via the API to that extension */
 const resolvedConnSpecs = new Map<string, any>();
 
@@ -959,6 +964,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<any> {
 
   const languageServerExt =
     context.extensionMode && context.extensionMode !== vscode.ExtensionMode.Test ? languageServer() : null;
+  const languageServerVersion = languageServerExt?.packageJSON.version;
+  const useLegacyWorkspaceSymbolProvider = !languageServerVersion || semver.lt(languageServerVersion, "2.8.3-0");
   const noLSsubscriptions: { dispose(): any }[] = [];
   if (!languageServerExt) {
     if (!config("ignoreInstallLanguageServer")) {
@@ -1009,9 +1016,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<any> {
     );
     context.subscriptions.push(...noLSsubscriptions);
   } else {
-    const lsVersion = languageServerExt.packageJSON.version;
     // Language Server implements FoldingRangeProvider starting from 1.0.5
-    if (semver.lt(lsVersion, "1.0.5")) {
+    if (semver.lt(languageServerVersion, "1.0.5")) {
       context.subscriptions.push(
         vscode.languages.registerFoldingRangeProvider(
           documentSelector(clsLangId),
@@ -1373,7 +1379,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<any> {
     }),
     vscode.languages.setLanguageConfiguration(clsLangId, getLanguageConfiguration(clsLangId)),
     vscode.languages.registerCodeActionsProvider(documentSelector(clsLangId, macLangId), new CodeActionProvider()),
-    vscode.languages.registerWorkspaceSymbolProvider(new WorkspaceSymbolProvider()),
+    ...(useLegacyWorkspaceSymbolProvider
+      ? [vscode.languages.registerWorkspaceSymbolProvider(new WorkspaceSymbolProvider())]
+      : []),
     vscode.debug.registerDebugConfigurationProvider("objectscript", new ObjectScriptConfigurationProvider()),
     vscode.debug.registerDebugAdapterDescriptorFactory("objectscript", debugAdapterFactory),
     debugAdapterFactory,
@@ -1929,8 +1937,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<any> {
     onDidChangeConnection(): vscode.Event<void> {
       return _onDidChangeConnection.event;
     },
-    getUriForDocument(document: string): vscode.Uri {
-      return DocumentContentProvider.getUri(document);
+    getUriForDocument(document: string, options?: GetUriForDocumentOptions): vscode.Uri {
+      const workspaceFolderUri = options?.workspaceFolderUri ? vscode.Uri.parse(options.workspaceFolderUri) : undefined;
+      return DocumentContentProvider.getUri(
+        document,
+        undefined,
+        undefined,
+        undefined,
+        workspaceFolderUri,
+        options?.forceServerCopy ?? false
+      );
     },
   };
 
